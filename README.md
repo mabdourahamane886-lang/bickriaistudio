@@ -1,0 +1,2 @@
+# bickriaistudio
+AI bickri
