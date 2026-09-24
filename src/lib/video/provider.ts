@@ -30,6 +30,41 @@ function getToken() {
   return token;
 }
 
+function retryDelayMs(attempt: number, retryAfter: string | null) {
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(seconds * 1000, 30000);
+  }
+
+  // Backoff: 2s, 5s, 10s.
+  return [2000, 5000, 10000][attempt] ?? 10000;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function createPrediction(body: string) {
+  const maxRetries = 2;
+
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(MODEL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        "Content-Type": "application/json"
+      },
+      body
+    });
+
+    if (response.status !== 429 || attempt >= maxRetries) {
+      return response;
+    }
+
+    await sleep(retryDelayMs(attempt, response.headers.get("Retry-After")));
+  }
+}
+
 export async function createReplicateVideo(input: {
   scenes: VideoScene[];
   format: "9:16" | "16:9" | "1:1";
@@ -51,13 +86,8 @@ export async function createReplicateVideo(input: {
     Math.max(5, Number(input.scenes[0]?.durationSeconds || 10))
   );
 
-  const response = await fetch(MODEL_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${getToken()}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
+  const response = await createPrediction(
+    JSON.stringify({
       input: {
         prompt,
         size: getSize(input.format),
@@ -67,18 +97,27 @@ export async function createReplicateVideo(input: {
         enable_prompt_expansion: true
       }
     })
-  });
+  );
 
   const data = (await response.json().catch(() => ({}))) as {
     id?: string;
     status?: string;
     output?: string | string[] | null;
     error?: string | null;
+    detail?: string | null;
   };
 
   if (!response.ok || !data.id) {
+    if (response.status === 429) {
+      throw new Error(
+        "Replicate est temporairement limité (HTTP 429). Réessaie dans quelques secondes. Si le problème persiste, vérifie les limites/quota de ton compte Replicate."
+      );
+    }
+
     throw new Error(
-      data.error || `Replicate a répondu avec HTTP ${response.status}.`
+      data.error ||
+        data.detail ||
+        `Replicate a répondu avec HTTP ${response.status}.`
     );
   }
 
@@ -110,11 +149,19 @@ export async function getReplicateVideo(id: string): Promise<VideoPrediction> {
     status?: string;
     output?: string | string[] | null;
     error?: string | null;
+    detail?: string | null;
   };
 
   if (!response.ok || !data.id) {
+    if (response.status === 429) {
+      throw new Error(
+        "Replicate limite temporairement les vérifications de statut (HTTP 429). Nouvelle tentative automatique au prochain cycle."
+      );
+    }
+
     throw new Error(
       data.error ||
+        data.detail ||
         `Impossible de récupérer la génération vidéo (HTTP ${response.status}).`
     );
   }
