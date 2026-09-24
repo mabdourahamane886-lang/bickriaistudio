@@ -15,7 +15,7 @@
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "@fal-ai/client": "latest"
+    "replicate": "latest"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "latest",
