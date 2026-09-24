@@ -57,14 +57,32 @@ export default function DashboardPage() {
   }
 
   async function generateVideo() {
-    if (!script) return;
+    if (!script || loading) return;
     setLoading(true); setMessage(""); setVideo(null);
     try {
-      const r = await fetch("/api/video", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ format:"9:16", scenes:[{ narration:script, visualPrompt:idea?.title, durationSeconds:10 }] }) });
-      const data = await r.json(); if (!r.ok) throw new Error(data.error || "Erreur vidéo");
+      const r = await fetch("/api/video", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          format:"9:16",
+          scenes:[{ narration:script, visualPrompt:idea?.title, durationSeconds:10 }]
+        })
+      });
+      const data = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        if (r.status === 429) {
+          throw new Error("Replicate est temporairement limité (HTTP 429). Attends quelques secondes puis réessaie.");
+        }
+        throw new Error(data.error || "Erreur vidéo");
+      }
+
       setVideo(data);
-    } catch (e) { setMessage(e instanceof Error ? e.message : "Erreur inattendue"); }
-    finally { setLoading(false); }
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Erreur inattendue");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -101,7 +119,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {script && <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-bold">📝 Script généré</h2><pre className="mt-4 whitespace-pre-wrap font-sans leading-7 text-slate-300">{script}</pre><button onClick={generateVideo} disabled={loading} className="mt-6 rounded-xl bg-yellow-400 px-5 py-3 font-bold text-slate-950 disabled:opacity-50">🎬 Générer la vidéo (10 s)</button>{video && <div className="mt-4 rounded-xl border border-slate-700 p-4"><p className="text-yellow-300">Rendu : {video.status}</p>{video.error && <p className="mt-2 text-sm text-red-400">{video.error}</p>}{video.id && <p className="mt-1 text-sm text-slate-400">ID : {video.id}</p>}{video.url && <a className="mt-2 inline-block text-sm text-yellow-300 underline" href={video.url} target="_blank">Ouvrir la vidéo</a>}</div>}</section>}
+        {script && <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-bold">📝 Script généré</h2><pre className="mt-4 whitespace-pre-wrap font-sans leading-7 text-slate-300">{script}</pre><button onClick={generateVideo} disabled={loading} className="mt-6 rounded-xl bg-yellow-400 px-5 py-3 font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50">{loading ? "⏳ Génération en cours…" : "🎬 Générer la vidéo (10 s)"}</button>{video && <div className="mt-4 rounded-xl border border-slate-700 p-4"><p className="text-yellow-300">Rendu : {video.status}</p>{video.error && <p className="mt-2 text-sm text-red-400">{video.error}</p>}{video.id && <p className="mt-1 text-sm text-slate-400">ID : {video.id}</p>}{video.url && <a className="mt-2 inline-block text-sm text-yellow-300 underline" href={video.url} target="_blank">Ouvrir la vidéo</a>}</div>}</section>}
       </div>
     </main>
   );
