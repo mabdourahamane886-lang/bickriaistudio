@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
 type Idea = { title: string; hook: string; angle: string; platform: string };
@@ -12,7 +12,28 @@ export default function DashboardPage() {
   const [script, setScript] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [video, setVideo] = useState<{status:string; id?:string; url?:string} | null>(null);
+  const [video, setVideo] = useState<{status:string; id?:string; url?:string; error?:string} | null>(null);
+
+  useEffect(() => {
+    if (!video?.id || video.url || ["succeeded", "failed", "canceled"].includes(video.status)) return;
+
+    const timer = window.setInterval(async () => {
+      try {
+        const r = await fetch(`/api/video/status/${video.id}`);
+        const data = await r.json();
+        if (r.ok) {
+          setVideo(data);
+          if (data.status === "succeeded" || data.status === "failed" || data.status === "canceled") {
+            window.clearInterval(timer);
+          }
+        }
+      } catch {
+        // Le prochain cycle réessaiera automatiquement.
+      }
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [video?.id, video?.status, video?.url]);
 
   async function generateIdea() {
     setLoading(true); setMessage("");
@@ -39,7 +60,7 @@ export default function DashboardPage() {
     if (!script) return;
     setLoading(true); setMessage(""); setVideo(null);
     try {
-      const r = await fetch("/api/video", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ format:"9:16", scenes:[{ narration:script, visualPrompt:idea?.title, durationSeconds:30 }] }) });
+      const r = await fetch("/api/video", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ format:"9:16", scenes:[{ narration:script, visualPrompt:idea?.title, durationSeconds:10 }] }) });
       const data = await r.json(); if (!r.ok) throw new Error(data.error || "Erreur vidéo");
       setVideo(data);
     } catch (e) { setMessage(e instanceof Error ? e.message : "Erreur inattendue"); }
@@ -80,7 +101,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {script && <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-bold">📝 Script généré</h2><pre className="mt-4 whitespace-pre-wrap font-sans leading-7 text-slate-300">{script}</pre><button onClick={generateVideo} disabled={loading} className="mt-6 rounded-xl bg-yellow-400 px-5 py-3 font-bold text-slate-950 disabled:opacity-50">🎬 Générer la vidéo</button>{video && <div className="mt-4 rounded-xl border border-slate-700 p-4"><p className="text-yellow-300">Rendu : {video.status}</p>{video.id && <p className="mt-1 text-sm text-slate-400">ID : {video.id}</p>}{video.url && <a className="mt-2 inline-block text-sm text-yellow-300 underline" href={video.url} target="_blank">Ouvrir la vidéo</a>}</div>}</section>}
+        {script && <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-bold">📝 Script généré</h2><pre className="mt-4 whitespace-pre-wrap font-sans leading-7 text-slate-300">{script}</pre><button onClick={generateVideo} disabled={loading} className="mt-6 rounded-xl bg-yellow-400 px-5 py-3 font-bold text-slate-950 disabled:opacity-50">🎬 Générer la vidéo (10 s)</button>{video && <div className="mt-4 rounded-xl border border-slate-700 p-4"><p className="text-yellow-300">Rendu : {video.status}</p>{video.error && <p className="mt-2 text-sm text-red-400">{video.error}</p>}{video.id && <p className="mt-1 text-sm text-slate-400">ID : {video.id}</p>}{video.url && <a className="mt-2 inline-block text-sm text-yellow-300 underline" href={video.url} target="_blank">Ouvrir la vidéo</a>}</div>}</section>}
       </div>
     </main>
   );
