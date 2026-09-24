@@ -1,4 +1,4 @@
-import { fal } from "@fal-ai/client";
+import Replicate from "replicate";
 
 export interface VideoScene {
   narration?: string;
@@ -7,26 +7,61 @@ export interface VideoScene {
 }
 
 export interface VideoProvider {
-  createRender(input: { scenes: VideoScene[]; format: "9:16" | "16:9" | "1:1" }): Promise<{ id: string; status: string; url?: string }>;
+  createRender(input: {
+    scenes: VideoScene[];
+    format: "9:16" | "16:9" | "1:1";
+  }): Promise<{ id: string; status: string; url?: string }>;
 }
 
-export async function createFalVideo(input: { scenes: VideoScene[]; format: "9:16" | "16:9" | "1:1" }) {
-  const key = process.env.FAL_KEY;
-  if (!key) throw new Error("FAL_KEY n'est pas configurée dans l'environnement Vercel.");
+function getSize(format: "9:16" | "16:9" | "1:1") {
+  if (format === "9:16") return "720*1280";
+  if (format === "1:1") return "720*720";
+  return "1280*720";
+}
 
-  fal.config({ credentials: key });
+export async function createReplicateVideo(input: {
+  scenes: VideoScene[];
+  format: "9:16" | "16:9" | "1:1";
+}) {
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) {
+    throw new Error("REPLICATE_API_TOKEN n'est pas configurée dans l'environnement Vercel.");
+  }
 
-  const prompt = input.scenes.map((s, i) =>
-    `Scène ${i + 1}: ${s.visualPrompt || s.narration || "cinematic scene"}. ${s.narration ? `Narration: ${s.narration}` : ""}`
-  ).join(" ");
+  const replicate = new Replicate({ auth: token });
 
-  const result = await fal.subscribe("fal-ai/kling-video/v3/standard/text-to-video", {
-    input: { prompt, aspect_ratio: input.format === "9:16" ? "9:16" : input.format === "1:1" ? "1:1" : "16:9" },
-    logs: false
+  const prompt = input.scenes.map((scene, index) =>
+    [
+      `Scene ${index + 1}: ${scene.visualPrompt || "cinematic scene"}.`,
+      scene.narration ? `Narration/dialogue: ${scene.narration}` : ""
+    ].filter(Boolean).join(" ")
+  ).join("\n");
+
+  // Wan 2.5 T2V supports short generated clips; keep the first render at 5 seconds.
+  const output = await replicate.run("wan-video/wan-2.5-t2v", {
+    input: {
+      prompt,
+      size: getSize(input.format),
+      duration: 5,
+      negative_prompt: "blurry, distorted, low quality, watermark, subtitles, text artifacts",
+      enable_prompt_expansion: true
+    }
   });
 
-  const data = result.data as any;
-  const url = data?.video?.url || data?.video_url || data?.url;
-  if (!url) throw new Error("Le fournisseur vidéo n'a pas retourné d'URL.");
-  return { id: String(result.requestId || data?.id || ""), status: "completed", url };
+  const url =
+    typeof output === "string"
+      ? output
+      : typeof (output as { url?: unknown })?.url === "function"
+        ? String((output as { url: () => string }).url())
+        : String((output as { url?: unknown })?.url || "");
+
+  if (!url || url === "undefined") {
+    throw new Error("Replicate n'a pas retourné d'URL vidéo.");
+  }
+
+  return {
+    id: "replicate-wan-2.5-t2v",
+    status: "completed",
+    url
+  };
 }
